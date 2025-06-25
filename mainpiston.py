@@ -13,15 +13,16 @@ import atexit
 
 # --- CONFIG ---
 DB_CONFIG = {
-    'host': '3.250.140.89',
+    'host': '127.0.0.1',            # ← use localhost when running on the same EC2 box
     'port': 3306,
     'user': 'root',
-    'password': 'Db@2025#ind$',
+    'password': 'Db@2025#ind$',     # or your chosen DB password
     'database': 'traders_leads',
     'auth_plugin': 'mysql_native_password',
-    'autocommit': False,  # Explicit commit control
+    'autocommit': False,            # Explicit commit control
     'raise_on_warnings': True
 }
+
 
 # Connection pool configuration
 POOL_CONFIG = {
