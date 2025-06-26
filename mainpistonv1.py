@@ -23,7 +23,6 @@ DB_CONFIG = {
     'raise_on_warnings': True
 }
 
-
 # Connection pool configuration
 POOL_CONFIG = {
     'pool_name': 'pistonheads_pool',
@@ -83,6 +82,7 @@ def close_all_connections():
 atexit.register(close_all_connections)
 
 # --- DATABASE OPERATIONS WITH VERIFICATION ---
+# 🔄 CHANGED: Updated table structure to include variant and body_type
 def verify_database_connection():
     """Verify database is accessible and table exists"""
     conn = get_connection_from_pool()
@@ -107,36 +107,39 @@ def verify_database_connection():
         
         table_exists = cursor.fetchone()[0] > 0
         
-        if not table_exists:
-            print("📝 Creating table raw_pistonheads_db...")
-            cursor.execute("""
-                CREATE TABLE raw_pistonheads_db (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    listing_url VARCHAR(500) UNIQUE,
-                    title TEXT,
-                    make VARCHAR(100),
-                    model VARCHAR(100),
-                    year VARCHAR(10),
-                    price VARCHAR(20),
-                    mileage VARCHAR(20),
-                    fuel_type VARCHAR(50),
-                    gearbox VARCHAR(50),
-                    dealer_name VARCHAR(200),
-                    dealer_phone VARCHAR(50),
-                    dealer_location TEXT,
-                    dealer_city VARCHAR(100),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_dealer_name (dealer_name),
-                    INDEX idx_created (created_at)
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            conn.commit()
-            print("✅ Table created successfully")
-        else:
-            # Get current row count
-            cursor.execute("SELECT COUNT(*) FROM raw_pistonheads_db")
-            row_count = cursor.fetchone()[0]
-            print(f"✅ Table exists with {row_count} rows")
+        # 🔄 CHANGED: Always recreate table to ensure new fields exist
+        if table_exists:
+            print("📝 Dropping old table to add new fields...")
+            cursor.execute("DROP TABLE raw_pistonheads_db")
+        
+        print("📝 Creating table raw_pistonheads_db with all vehicle fields...")
+        cursor.execute("""
+            CREATE TABLE raw_pistonheads_db (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                listing_url VARCHAR(500) UNIQUE,
+                title TEXT,
+                make VARCHAR(100),
+                model VARCHAR(100),
+                variant VARCHAR(200),          -- 🆕 NEW FIELD
+                year VARCHAR(10),
+                price VARCHAR(20),
+                mileage VARCHAR(20),
+                fuel_type VARCHAR(50),
+                body_type VARCHAR(50),         -- 🆕 NEW FIELD
+                gearbox VARCHAR(50),
+                dealer_name VARCHAR(200),
+                dealer_phone VARCHAR(50),
+                dealer_location TEXT,
+                dealer_city VARCHAR(100),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_dealer_name (dealer_name),
+                INDEX idx_make_model (make, model),
+                INDEX idx_year (year),
+                INDEX idx_created (created_at)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+        """)
+        conn.commit()
+        print("✅ Table created successfully with all vehicle fields")
         
         cursor.close()
         return True
@@ -148,6 +151,7 @@ def verify_database_connection():
         if conn.is_connected():
             conn.close()
 
+# 🔄 CHANGED: Updated to save variant and body_type
 def save_to_database(results: List[Dict]) -> bool:
     """Save results to database with verification"""
     if not results:
@@ -169,25 +173,30 @@ def save_to_database(results: List[Dict]) -> bool:
             dealer = r.get("dealer", {})
             
             try:
+                # 🔄 CHANGED: Added variant and body_type to INSERT
                 cursor.execute("""
                     INSERT INTO raw_pistonheads_db (
-                        listing_url, title, make, model, year, price, mileage,
-                        fuel_type, gearbox, dealer_name, dealer_phone, 
+                        listing_url, title, make, model, variant, year, price, mileage,
+                        fuel_type, body_type, gearbox, dealer_name, dealer_phone, 
                         dealer_location, dealer_city
-                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON DUPLICATE KEY UPDATE
                         title = VALUES(title),
                         price = VALUES(price),
-                        mileage = VALUES(mileage)
+                        mileage = VALUES(mileage),
+                        variant = VALUES(variant),
+                        body_type = VALUES(body_type)
                 """, (
                     r.get('listing_url'),
                     vehicle.get('title'),
                     vehicle.get('make'),
                     vehicle.get('model'),
+                    vehicle.get('variant'),      # 🆕 NEW
                     vehicle.get('year'),
                     vehicle.get('price'),
                     vehicle.get('mileage'),
                     vehicle.get('fuel_type'),
+                    vehicle.get('body_type'),     # 🆕 NEW
                     vehicle.get('gearbox'),
                     dealer.get('name'),
                     dealer.get('phone'),
@@ -227,7 +236,7 @@ def save_to_database(results: List[Dict]) -> bool:
         if conn.is_connected():
             conn.close()
 
-# --- CSV FALLBACK ---
+# 🔄 CHANGED: Updated CSV fields
 def save_to_csv(results: List[Dict], append=True):
     """Save results to CSV file"""
     mode = 'a' if append else 'w'
@@ -235,9 +244,10 @@ def save_to_csv(results: List[Dict], append=True):
     
     with open(LOCAL_CSV_FILE, mode, newline='', encoding='utf-8') as f:
         if results:
+            # 🔄 CHANGED: Added variant and body_type to fieldnames
             fieldnames = [
-                'timestamp', 'listing_url', 'title', 'make', 'model', 'year', 
-                'price', 'mileage', 'fuel_type', 'gearbox', 'dealer_name', 
+                'timestamp', 'listing_url', 'title', 'make', 'model', 'variant', 'year', 
+                'price', 'mileage', 'fuel_type', 'body_type', 'gearbox', 'dealer_name', 
                 'dealer_phone', 'dealer_location', 'dealer_city'
             ]
             
@@ -255,10 +265,12 @@ def save_to_csv(results: List[Dict], append=True):
                     'title': vehicle.get('title'),
                     'make': vehicle.get('make'),
                     'model': vehicle.get('model'),
+                    'variant': vehicle.get('variant'),      # 🆕 NEW
                     'year': vehicle.get('year'),
                     'price': vehicle.get('price'),
                     'mileage': vehicle.get('mileage'),
                     'fuel_type': vehicle.get('fuel_type'),
+                    'body_type': vehicle.get('body_type'),  # 🆕 NEW
                     'gearbox': vehicle.get('gearbox'),
                     'dealer_name': dealer.get('name'),
                     'dealer_phone': dealer.get('phone'),
@@ -297,7 +309,7 @@ def save_progress(progress: Dict):
     with open(PROGRESS_FILE, "w") as f:
         json.dump(progress, f, indent=2)
 
-# --- WEB SCRAPING FUNCTIONS (unchanged) ---
+# --- WEB SCRAPING FUNCTIONS ---
 async def extract_listings_and_next_page(search_url: str) -> Tuple[List[str], Optional[str]]:
     print(f"\n🔍 Processing page: {search_url}")
     
@@ -337,6 +349,7 @@ async def extract_listings_and_next_page(search_url: str) -> Tuple[List[str], Op
         
         return listing_urls, next_page_url
 
+# 🔄 COMPLETELY REWRITTEN: Enhanced extraction for all vehicle details
 async def extract_listing_details(listing_url: str) -> Dict:
     print(f"  🚗 Processing: {listing_url}")
     
@@ -358,57 +371,178 @@ async def extract_listing_details(listing_url: str) -> Dict:
         soup = BeautifulSoup(result.html, 'html.parser')
         data = {"listing_url": listing_url, "vehicle": {}, "dealer": {}}
 
-        # Extract vehicle details
+        # === 🆕 ENHANCED VEHICLE DETAILS EXTRACTION ===
+        
+        # 1. Extract title and parse make/model/variant
         title_elem = soup.find('h1')
         if title_elem:
             title = title_elem.get_text(strip=True)
             data['vehicle']['title'] = title
             
+            # Extract year first
             year_match = re.search(r"\b(19|20)\d{2}\b", title)
             if year_match:
                 data['vehicle']['year'] = year_match.group()
+                # Remove year from title for easier parsing
+                title_clean = title.replace(year_match.group(), '').strip()
+            else:
+                title_clean = title
             
-            words = title.split()
+            # Parse make, model, variant
+            # Common pattern: Make Model Variant (e.g., "Ford Focus Titanium")
+            words = title_clean.split()
+            if len(words) >= 1:
+                data['vehicle']['make'] = words[0]
             if len(words) >= 2:
-                data['vehicle']['make'] = words[0] if not words[0].isdigit() else words[1]
-                data['vehicle']['model'] = words[1] if not words[0].isdigit() else words[2]
+                data['vehicle']['model'] = words[1]
+            if len(words) >= 3:
+                # Everything after model is variant
+                data['vehicle']['variant'] = ' '.join(words[2:])
 
+        # 2. Extract price
         price_elem = soup.find(string=re.compile(r'£[\d,]+'))
         if price_elem:
             price_match = re.search(r'£([\d,]+)', str(price_elem))
             if price_match:
                 data['vehicle']['price'] = f"£{price_match.group(1)}"
 
-        for li in soup.find_all('li'):
-            text = li.get_text(strip=True).lower()
-            
-            if 'miles' in text:
-                miles_match = re.search(r'([\d,]+)\s*miles', text)
-                if miles_match:
-                    data['vehicle']['mileage'] = miles_match.group(1)
-            
-            for fuel in ['petrol', 'diesel', 'electric', 'hybrid']:
-                if fuel in text:
-                    data['vehicle']['fuel_type'] = fuel.capitalize()
-                    break
-            
-            for trans in ['manual', 'automatic']:
-                if trans in text:
-                    data['vehicle']['gearbox'] = trans.capitalize()
-                    break
+        # 3. 🆕 Extract detailed specifications
+        # Look for specification lists/sections
+        spec_sections = soup.find_all(['ul', 'div'], class_=re.compile('specs|details|features|key-info'))
+        
+        # Also check all list items for specs
+        all_li_items = soup.find_all('li')
+        
+        # Combine all text for searching
+        all_spec_text = []
+        for section in spec_sections:
+            all_spec_text.append(section.get_text(' ', strip=True))
+        for li in all_li_items:
+            all_spec_text.append(li.get_text(strip=True))
+        
+        combined_text = ' '.join(all_spec_text).lower()
+        
+        # 🆕 Extract mileage with multiple patterns
+        mileage_patterns = [
+            r'([\d,]+)\s*miles',
+            r'mileage[:\s]*([\d,]+)',
+            r'([\d,]+)\s*mi\b'
+        ]
+        for pattern in mileage_patterns:
+            match = re.search(pattern, combined_text)
+            if match:
+                data['vehicle']['mileage'] = match.group(1).replace(',', '')
+                break
+        
+        # 🆕 Extract fuel type
+        fuel_types = ['petrol', 'diesel', 'electric', 'hybrid', 'plug-in hybrid', 'lpg']
+        for fuel in fuel_types:
+            if fuel in combined_text:
+                data['vehicle']['fuel_type'] = fuel.title()
+                break
+        
+        # 🆕 Extract transmission/gearbox
+        trans_patterns = [
+            r'(manual|automatic|semi-automatic|cvt|dsg)',
+            r'transmission[:\s]*(manual|automatic)',
+            r'gearbox[:\s]*(manual|automatic)'
+        ]
+        for pattern in trans_patterns:
+            match = re.search(pattern, combined_text, re.I)
+            if match:
+                data['vehicle']['gearbox'] = match.group(1).capitalize()
+                break
+        
+        # 🆕 Extract body type
+        body_types = ['hatchback', 'saloon', 'estate', 'suv', 'coupe', 'convertible', 
+                     'mpv', 'pickup', 'van', '4x4', 'sports', 'cabriolet']
+        for body in body_types:
+            if body in combined_text:
+                data['vehicle']['body_type'] = body.title()
+                break
+        
+        # 🆕 Look for specs in table format
+        tables = soup.find_all('table')
+        for table in tables:
+            rows = table.find_all('tr')
+            for row in rows:
+                cells = row.find_all(['td', 'th'])
+                if len(cells) >= 2:
+                    label = cells[0].get_text(strip=True).lower()
+                    value = cells[1].get_text(strip=True)
+                    
+                    if 'year' in label and not data['vehicle'].get('year'):
+                        year_match = re.search(r'(19|20)\d{2}', value)
+                        if year_match:
+                            data['vehicle']['year'] = year_match.group()
+                    elif 'mileage' in label and not data['vehicle'].get('mileage'):
+                        data['vehicle']['mileage'] = value.replace(',', '').replace(' miles', '')
+                    elif 'fuel' in label and not data['vehicle'].get('fuel_type'):
+                        data['vehicle']['fuel_type'] = value
+                    elif 'transmission' in label or 'gearbox' in label:
+                        data['vehicle']['gearbox'] = value
+                    elif 'body' in label and not data['vehicle'].get('body_type'):
+                        data['vehicle']['body_type'] = value
 
-        # Extract dealer details
-        dealer_h3 = soup.find('h3', class_=re.compile('heading_root.*heading_h5'))
-        if dealer_h3:
-            dealer_name = dealer_h3.get_text(strip=True)
-            if dealer_name and not dealer_name.startswith('About'):
-                data['dealer']['name'] = dealer_name
+        # === 🆕 ENHANCED DEALER EXTRACTION ===
+        
+        # Method 1: Look for dealer name in various locations
+        dealer_selectors = [
+            ('h3', re.compile('heading_root.*heading_h5')),
+            ('h2', re.compile('dealer|seller')),
+            ('div', re.compile('SellerDetails_tradeSellerWrapper')),
+            ('div', re.compile('dealer-info|seller-info')),
+            ('div', {'class': re.compile('seller.*name')}),
+            ('span', {'class': re.compile('dealer.*name')})
+        ]
+        
+        dealer_name = None
+        for tag, selector in dealer_selectors:
+            if isinstance(selector, dict):
+                elem = soup.find(tag, selector)
+            else:
+                elem = soup.find(tag, class_=selector)
+            
+            if elem:
+                # Look for h3 within the element
+                h3 = elem.find('h3') if tag != 'h3' else elem
+                if h3:
+                    text = h3.get_text(strip=True)
+                    if text and not text.startswith('About') and len(text) > 2:
+                        dealer_name = text
+                        break
+                else:
+                    # Try to get text directly
+                    text = elem.get_text(strip=True)
+                    if text and ('cars' in text.lower() or 'motors' in text.lower()):
+                        dealer_name = text
+                        break
+        
+        if dealer_name:
+            data['dealer']['name'] = dealer_name
+        
+        # 🆕 Method 2: Look for dealer in "About the seller" section
+        if not data['dealer'].get('name'):
+            about_seller = soup.find(string=re.compile('About the seller', re.I))
+            if about_seller:
+                parent = about_seller.find_parent(['div', 'section'])
+                if parent:
+                    # Look for the next h3 or strong tag
+                    for tag in ['h3', 'h2', 'strong', 'b']:
+                        name_elem = parent.find(tag)
+                        if name_elem:
+                            text = name_elem.get_text(strip=True)
+                            if text and not text.startswith('About'):
+                                data['dealer']['name'] = text
+                                break
 
+        # Extract phone
         tel_elem = soup.find('a', href=re.compile(r'tel:'))
         if tel_elem:
             phone = tel_elem.get('href', '').replace('tel:', '')
             data['dealer']['phone'] = phone
 
+        # Extract location
         location_elem = soup.find(string=re.compile(r'\w+,\s*United Kingdom'))
         if location_elem:
             location = location_elem.strip()
@@ -417,6 +551,18 @@ async def extract_listing_details(listing_url: str) -> Dict:
             city_match = re.match(r'([^,]+),', location)
             if city_match:
                 data['dealer']['city'] = city_match.group(1)
+
+        # 🆕 Print detailed results for debugging
+        print(f"  ✅ Found - Make: {data['vehicle'].get('make')}, "
+              f"Model: {data['vehicle'].get('model')}, "
+              f"Variant: {data['vehicle'].get('variant')}, "
+              f"Year: {data['vehicle'].get('year')}, "
+              f"Price: {data['vehicle'].get('price')}, "
+              f"Mileage: {data['vehicle'].get('mileage')}, "
+              f"Fuel: {data['vehicle'].get('fuel_type')}, "
+              f"Body: {data['vehicle'].get('body_type')}, "
+              f"Gearbox: {data['vehicle'].get('gearbox')}, "
+              f"Dealer: {data['dealer'].get('name')}")
 
         return data
 
