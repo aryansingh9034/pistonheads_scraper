@@ -9,17 +9,27 @@ from scrapers.aa_scraper          import run_aa
 # helper: flatten nested {"vehicle":{}, "dealer":{}} → single dict
 # ────────────────────────────────────────────────────────────
 def flatten(rec: dict) -> dict:
+    v = rec.get("vehicle", {})
+    d = rec.get("dealer",  {})
+
     flat = {
-        "listing_url": rec.get("listing_url")
+        "listing_url"   : rec.get("listing_url"),
+        "title"         : v.get("title"),
+        "make"          : v.get("make"),
+        "model"         : v.get("model"),
+        "year"          : v.get("year"),
+        "price"         : v.get("price"),
+        "mileage"       : v.get("mileage"),
+        "fuel_type"     : v.get("fuel_type"),
+        "gearbox"       : v.get("gearbox"),
+        # dealer mapping ↓
+        "dealer_name"   : d.get("name"),
+        "dealer_phone"  : d.get("phone"),
+        "dealer_location": d.get("location"),
+        "dealer_city"   : d.get("city"),
     }
-    flat.update(rec.get("vehicle",  {}))
-    flat.update(rec.get("dealer",   {}))
-
-    # strip columns that don’t exist in raw_pistonheads_db
-    flat.pop("variant",   None)
-    flat.pop("body_type", None)
-
-    return flat
+    # drop keys the table doesn't have
+    return {k: v for k, v in flat.items() if v not in (None, "", {})}
 
 
 async def main():
