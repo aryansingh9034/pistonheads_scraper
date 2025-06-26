@@ -1,31 +1,20 @@
-#!/usr/bin/env python3
-import asyncio, datetime
+from scrapers.aa_scraper import run_aa
 from scrapers.pistonheads_scraper import run_pistonheads
-from scrapers.aa_scraper          import run_aa
-from db_helper import save_rows
 
-TABLE = "used_car_leads"   # single table with source column
+import asyncio
 
 async def main():
-    t0 = datetime.datetime.utcnow()
-    ph_rows, aa_rows = await asyncio.gather(
-        run_pistonheads(batch_pages=20),
-        run_aa(batch_size=400)             # reads aa_urls.txt by default
-    )
+    print("\n🚗 Running AA scraper")
+    aa_data = await run_aa()
+    print(f"✅ AA done: {len(aa_data)} listings\n")
 
-    all_rows = []
-    for src, rows in (("pistonheads", ph_rows), ("aa", aa_rows)):
-        for r in rows:
-            flat = {
-                "source": src,
-                "listing_url": r["listing_url"],
-                **r["vehicle"],
-                **{f"dealer_{k}": v for k, v in r["dealer"].items()}
-            }
-            all_rows.append(flat)
+    print("\n🏁 Running PistonHeads scraper")
+    piston_data = await run_pistonheads()
+    print(f"✅ PistonHeads done: {len(piston_data)} listings\n")
 
-    save_rows(TABLE, all_rows)
-    print(f"✅ Stored {len(all_rows)} rows into {TABLE}  ({datetime.datetime.utcnow()-t0})")
+    # Save to DB (if using db_helper.save_rows)
+    from db_helper import save_rows
+    save_rows(aa_data + piston_data)
 
 if __name__ == "__main__":
     asyncio.run(main())
