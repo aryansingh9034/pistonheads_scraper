@@ -1,0 +1,4 @@
+# requirements.txt
+crawl4ai==0.4.247
+beautifulsoup4
+mysql-connector-python
