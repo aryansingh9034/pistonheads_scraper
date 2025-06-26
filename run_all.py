@@ -1,21 +1,22 @@
-from scrapers.aa_scraper import run_aa
-from scrapers.pistonheads_scraper import run_pistonheads
-
-import asyncio
+# helper to squash vehicle + dealer into one flat dict
+def flatten(rec: dict) -> dict:
+    flat = {
+        "listing_url": rec.get("listing_url"),
+        # vehicle fields
+        **rec.get("vehicle", {}),
+        # dealer fields
+        **rec.get("dealer", {})
+    }
+    # drop keys your table doesn’t have
+    flat.pop("variant",   None)
+    flat.pop("body_type", None)
+    return flat
 
 async def main():
-    print("\n🚗 Running AA scraper")
-    aa_data = await run_aa()
-    print(f"✅ AA done: {len(aa_data)} listings\n")
+    aa_data        = await run_aa()
+    piston_data    = await run_pistonheads()
 
-    print("\n🏁 Running PistonHeads scraper")
-    piston_data = await run_pistonheads()
-    print(f"✅ PistonHeads done: {len(piston_data)} listings\n")
+    all_rows_flat  = [flatten(r) for r in (aa_data + piston_data)]
 
-    # Save to DB (if using db_helper.save_rows)
-    from db_helper import save_rows
-    all_rows = aa_data + piston_data          
-    save_rows("used_car_leads", all_rows)     
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    # store into the table that actually exists
+    save_rows("raw_pistonheads_db", all_rows_flat)
