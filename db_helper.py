@@ -1,7 +1,8 @@
-# db_helper.py — Enhanced MySQL pool + generic save_rows() with better error handling
+# db_helper.py — Updated for single leads table with source tracking
 import mysql.connector
 from mysql.connector import pooling, Error
 import time
+from datetime import datetime
 
 DB_CFG = dict(
     host="127.0.0.1",
@@ -37,13 +38,13 @@ def create_pool(retries=3):
 # Create the pool
 try:
     _pool = create_pool()
-    pool = _pool  # Expose pool for external use
+    pool = _pool
 except Exception as e:
     print(f"❌ Failed to create database pool: {e}")
     pool = None
 
-def ensure_table_exists(table_name: str):
-    """Ensure the table exists with the correct structure"""
+def ensure_leads_table_exists():
+    """Ensure the leads table exists with all required columns"""
     if not pool:
         print("❌ No database connection available")
         return False
@@ -52,47 +53,98 @@ def ensure_table_exists(table_name: str):
         cn = pool.get_connection()
         cur = cn.cursor()
         
-        # Check if table exists
+        # Check if leads table exists
         cur.execute("""
             SELECT COUNT(*) 
             FROM information_schema.tables 
-            WHERE table_schema = %s AND table_name = %s
-        """, (DB_CFG['database'], table_name))
+            WHERE table_schema = %s AND table_name = 'leads'
+        """, (DB_CFG['database'],))
         
         exists = cur.fetchone()[0] > 0
         
         if not exists:
-            print(f"📝 Creating table {table_name}...")
+            print(f"📝 Creating leads table...")
+            cur.execute("""
+                CREATE TABLE leads (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    company_name VARCHAR(200),
+                    website_address VARCHAR(255),
+                    contact_form_url VARCHAR(255),
+                    phone_number VARCHAR(20),
+                    email VARCHAR(120),
+                    information TEXT,
+                    status ENUM('new_contact', 'email_001', 'email_002', 'email_003') DEFAULT 'new_contact',
+                    source VARCHAR(50),
+                    assigned_user_id INT,
+                    address_line_1 VARCHAR(255),
+                    address_line_2 VARCHAR(255),
+                    town VARCHAR(100),
+                    city VARCHAR(100),
+                    country VARCHAR(100),
+                    postcode VARCHAR(20),
+                    first_name VARCHAR(50),
+                    last_name VARCHAR(50),
+                    contact_number VARCHAR(20),
+                    email_address VARCHAR(120),
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    last_updated DATETIME,
+                    automation_stage VARCHAR(50),
+                    
+                    -- Vehicle specific fields
+                    listing_url VARCHAR(500) UNIQUE,
+                    make VARCHAR(100),
+                    model VARCHAR(100),
+                    variant VARCHAR(200),
+                    year VARCHAR(10),
+                    price VARCHAR(20),
+                    mileage VARCHAR(20),
+                    fuel_type VARCHAR(50),
+                    body_type VARCHAR(50),
+                    gearbox VARCHAR(50),
+                    
+                    INDEX idx_source (source),
+                    INDEX idx_status (status),
+                    INDEX idx_created (created_at),
+                    INDEX idx_make_model (make, model),
+                    INDEX idx_listing_url (listing_url)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            cn.commit()
+            print(f"✅ Leads table created successfully")
+        else:
+            # Check and add missing columns
+            missing_columns = [
+                ('listing_url', 'VARCHAR(500) UNIQUE'),
+                ('make', 'VARCHAR(100)'),
+                ('model', 'VARCHAR(100)'),
+                ('variant', 'VARCHAR(200)'),
+                ('year', 'VARCHAR(10)'),
+                ('price', 'VARCHAR(20)'),
+                ('mileage', 'VARCHAR(20)'),
+                ('fuel_type', 'VARCHAR(50)'),
+                ('body_type', 'VARCHAR(50)'),
+                ('gearbox', 'VARCHAR(50)'),
+                ('source', 'VARCHAR(50)')
+            ]
             
-            # Create table based on name
-            if table_name == "raw_pistonheads_db" or table_name == "raw_aa_db":
-                cur.execute(f"""
-                    CREATE TABLE {table_name} (
-                        id INT AUTO_INCREMENT PRIMARY KEY,
-                        listing_url VARCHAR(500) UNIQUE,
-                        title TEXT,
-                        make VARCHAR(100),
-                        model VARCHAR(100),
-                        variant VARCHAR(200),
-                        year VARCHAR(10),
-                        price VARCHAR(20),
-                        mileage VARCHAR(20),
-                        fuel_type VARCHAR(50),
-                        body_type VARCHAR(50),
-                        gearbox VARCHAR(50),
-                        dealer_name VARCHAR(200),
-                        dealer_phone VARCHAR(50),
-                        dealer_location TEXT,
-                        dealer_city VARCHAR(100),
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        INDEX idx_dealer_name (dealer_name),
-                        INDEX idx_make_model (make, model),
-                        INDEX idx_year (year),
-                        INDEX idx_created (created_at)
-                    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                """)
-                cn.commit()
-                print(f"✅ Table {table_name} created successfully")
+            for col_name, col_def in missing_columns:
+                cur.execute("""
+                    SELECT COUNT(*) 
+                    FROM information_schema.columns 
+                    WHERE table_schema = %s 
+                    AND table_name = 'leads' 
+                    AND column_name = %s
+                """, (DB_CFG['database'], col_name))
+                
+                if cur.fetchone()[0] == 0:
+                    print(f"📝 Adding missing column '{col_name}' to leads table...")
+                    try:
+                        cur.execute(f"ALTER TABLE leads ADD COLUMN {col_name} {col_def}")
+                        cn.commit()
+                    except Error as e:
+                        if 'Duplicate' not in str(e):
+                            print(f"⚠️ Error adding column {col_name}: {e}")
         
         cur.close()
         cn.close()
@@ -102,8 +154,8 @@ def ensure_table_exists(table_name: str):
         print(f"❌ Error ensuring table exists: {e}")
         return False
 
-def save_rows(table: str, rows: list[dict]):
-    """Save rows with upsert logic and better error handling"""
+def save_to_leads(rows: list[dict], source: str):
+    """Save rows to leads table with source tracking"""
     if not rows:
         print("⚠️ No rows to save")
         return
@@ -113,8 +165,8 @@ def save_rows(table: str, rows: list[dict]):
         return
     
     # Ensure table exists
-    if not ensure_table_exists(table):
-        print(f"❌ Failed to ensure table {table} exists")
+    if not ensure_leads_table_exists():
+        print(f"❌ Failed to ensure leads table exists")
         return
     
     inserted_count = 0
@@ -125,25 +177,62 @@ def save_rows(table: str, rows: list[dict]):
         cn = pool.get_connection()
         cur = cn.cursor()
         
-        # Get column names from first row
-        cols = list(rows[0].keys())
-        col_csv = ",".join(cols)
-        ph = ",".join(["%s"] * len(cols))
-        
-        # Create update clause for duplicate keys
-        update_cols = [c for c in cols if c not in ['id', 'listing_url', 'created_at']]
-        upd = ",".join([f"{c}=VALUES({c})" for c in update_cols])
-        
-        sql = f"""
-            INSERT INTO {table} ({col_csv}) 
-            VALUES ({ph}) 
-            ON DUPLICATE KEY UPDATE {upd}
+        # Prepare SQL
+        sql = """
+            INSERT INTO leads (
+                listing_url, company_name, information, 
+                make, model, variant, year, price, mileage,
+                fuel_type, body_type, gearbox,
+                phone_number, address_line_1, city,
+                source, status
+            ) VALUES (
+                %s, %s, %s,
+                %s, %s, %s, %s, %s, %s,
+                %s, %s, %s,
+                %s, %s, %s,
+                %s, %s
+            )
+            ON DUPLICATE KEY UPDATE
+                company_name = VALUES(company_name),
+                information = VALUES(information),
+                make = VALUES(make),
+                model = VALUES(model),
+                variant = VALUES(variant),
+                year = VALUES(year),
+                price = VALUES(price),
+                mileage = VALUES(mileage),
+                fuel_type = VALUES(fuel_type),
+                body_type = VALUES(body_type),
+                gearbox = VALUES(gearbox),
+                phone_number = VALUES(phone_number),
+                address_line_1 = VALUES(address_line_1),
+                city = VALUES(city),
+                updated_at = NOW()
         """
         
         for i, row in enumerate(rows, 1):
             try:
-                # Ensure all expected columns have values (use None for missing)
-                values = tuple(row.get(c) for c in cols)
+                # Prepare values
+                values = (
+                    row.get('listing_url'),
+                    row.get('dealer_name', ''),  # company_name
+                    row.get('title', ''),  # information
+                    row.get('make', ''),
+                    row.get('model', ''),
+                    row.get('variant', ''),
+                    row.get('year', ''),
+                    row.get('price', ''),
+                    row.get('mileage', ''),
+                    row.get('fuel_type', ''),
+                    row.get('body_type', ''),
+                    row.get('gearbox', ''),
+                    row.get('dealer_phone', ''),  # phone_number
+                    row.get('dealer_location', ''),  # address_line_1
+                    row.get('dealer_city', ''),  # city
+                    source,  # source (AA or PistonHeads)
+                    'new_contact'  # status
+                )
+                
                 cur.execute(sql, values)
                 
                 if cur.rowcount == 1:
@@ -164,15 +253,20 @@ def save_rows(table: str, rows: list[dict]):
         # Final commit
         cn.commit()
         
+        # Get total count for this source
+        cur.execute("SELECT COUNT(*) FROM leads WHERE source = %s", (source,))
+        source_count = cur.fetchone()[0]
+        
         # Get total count
-        cur.execute(f"SELECT COUNT(*) FROM {table}")
+        cur.execute("SELECT COUNT(*) FROM leads")
         total_count = cur.fetchone()[0]
         
-        print(f"\n✅ Database operation complete for {table}:")
+        print(f"\n✅ Database operation complete for {source}:")
         print(f"   - New records inserted: {inserted_count}")
         print(f"   - Records updated: {updated_count}")
         print(f"   - Errors: {error_count}")
-        print(f"   - Total records in table: {total_count}")
+        print(f"   - Total {source} records: {source_count}")
+        print(f"   - Total records in leads table: {total_count}")
         
         cur.close()
         cn.close()
@@ -183,8 +277,8 @@ def save_rows(table: str, rows: list[dict]):
             cn.rollback()
             cn.close()
 
-def get_stats(table: str) -> dict:
-    """Get statistics for a table"""
+def get_stats_by_source() -> dict:
+    """Get statistics grouped by source"""
     if not pool:
         return {}
         
@@ -192,40 +286,51 @@ def get_stats(table: str) -> dict:
         cn = pool.get_connection()
         cur = cn.cursor()
         
+        # Get count by source
+        cur.execute("""
+            SELECT source, COUNT(*) as count 
+            FROM leads 
+            WHERE source IS NOT NULL 
+            GROUP BY source
+        """)
+        source_counts = dict(cur.fetchall())
+        
         # Get total count
-        cur.execute(f"SELECT COUNT(*) FROM {table}")
+        cur.execute("SELECT COUNT(*) FROM leads")
         total = cur.fetchone()[0]
         
-        # Get count by make
-        cur.execute(f"""
-            SELECT make, COUNT(*) as count 
-            FROM {table} 
-            WHERE make IS NOT NULL 
-            GROUP BY make 
-            ORDER BY count DESC 
-            LIMIT 10
+        # Get recent records
+        cur.execute("""
+            SELECT source, COUNT(*) as count 
+            FROM leads 
+            WHERE created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)
+            AND source IS NOT NULL
+            GROUP BY source
         """)
-        top_makes = cur.fetchall()
-        
-        # Get price range
-        cur.execute(f"""
-            SELECT 
-                MIN(CAST(REPLACE(REPLACE(price, '£', ''), ',', '') AS UNSIGNED)) as min_price,
-                MAX(CAST(REPLACE(REPLACE(price, '£', ''), ',', '') AS UNSIGNED)) as max_price
-            FROM {table}
-            WHERE price IS NOT NULL AND price != ''
-        """)
-        price_range = cur.fetchone()
+        recent_counts = dict(cur.fetchall())
         
         cur.close()
         cn.close()
         
         return {
             'total': total,
-            'top_makes': top_makes,
-            'price_range': price_range
+            'by_source': source_counts,
+            'last_24h': recent_counts
         }
         
     except Error as e:
         print(f"❌ Error getting stats: {e}")
         return {}
+
+# Backward compatibility function
+def save_rows(table: str, rows: list[dict]):
+    """Backward compatible function that routes to save_to_leads"""
+    # Determine source from table name
+    if 'pistonheads' in table.lower():
+        source = 'PistonHeads'
+    elif 'aa' in table.lower():
+        source = 'AA'
+    else:
+        source = 'Unknown'
+    
+    save_to_leads(rows, source)
