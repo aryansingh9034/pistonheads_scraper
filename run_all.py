@@ -14,7 +14,8 @@ async def main():
 
     # Save to DB (if using db_helper.save_rows)
     from db_helper import save_rows
-    save_rows(aa_data + piston_data)
+    all_rows = aa_data + piston_data          
+    save_rows("used_car_leads", all_rows)     
 
 if __name__ == "__main__":
     asyncio.run(main())
