@@ -1,22 +1,41 @@
-# helper to squash vehicle + dealer into one flat dict
+# run_all.py  ─ orchestrator
+import asyncio
+from db_helper import save_rows
+from scrapers.pistonheads_scraper import run_pistonheads
+from scrapers.aa_scraper          import run_aa
+
+
+# ────────────────────────────────────────────────────────────
+# helper: flatten nested {"vehicle":{}, "dealer":{}} → single dict
+# ────────────────────────────────────────────────────────────
 def flatten(rec: dict) -> dict:
     flat = {
-        "listing_url": rec.get("listing_url"),
-        # vehicle fields
-        **rec.get("vehicle", {}),
-        # dealer fields
-        **rec.get("dealer", {})
+        "listing_url": rec.get("listing_url")
     }
-    # drop keys your table doesn’t have
+    flat.update(rec.get("vehicle",  {}))
+    flat.update(rec.get("dealer",   {}))
+
+    # strip columns that don’t exist in raw_pistonheads_db
     flat.pop("variant",   None)
     flat.pop("body_type", None)
+
     return flat
 
+
 async def main():
-    aa_data        = await run_aa()
-    piston_data    = await run_pistonheads()
+    print("🚗 Running PistonHeads scraper …")
+    ph_rows = await run_pistonheads(batch_pages=1, start_page=1)
 
-    all_rows_flat  = [flatten(r) for r in (aa_data + piston_data)]
+    print("🚗 Running AA scraper …")
+    aa_rows = await run_aa(batch_size=50)      # adjust batch_size as you like
 
-    # store into the table that actually exists
-    save_rows("raw_pistonheads_db", all_rows_flat)
+    all_flat = [flatten(r) for r in ph_rows + aa_rows]
+    print(f"✅ Total rows ready for DB: {len(all_flat)}")
+
+    # one insert for everything
+    save_rows("raw_pistonheads_db", all_flat)  # <── table name first
+    print("✅ DB insert complete")
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
