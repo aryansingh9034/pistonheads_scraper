@@ -1,0 +1,20 @@
+{
+  "pistonheads": {
+    "last_page": 0,
+    "total_pages_scraped": 0,
+    "total_listings": 0,
+    "last_run": null
+  },
+  "aa": {
+    "last_page": 0,
+    "total_pages_scraped": 0,
+    "total_listings": 0,
+    "last_run": null
+  },
+  "cazoo": {
+    "last_page": 6,
+    "total_pages_scraped": 6,
+    "total_listings": 78,
+    "last_run": "2025-06-29T05:41:12.566250"
+  }
+}

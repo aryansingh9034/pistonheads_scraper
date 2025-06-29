@@ -10,6 +10,7 @@ from urllib.parse import urlparse, parse_qs, urlencode
 from crawl4ai import AsyncWebCrawler
 from bs4 import BeautifulSoup
 from datetime import datetime
+from db_helper import save_to_leads
 
 # ──────────────────────────────────────────────────────────────
 #  CONSTANTS & JS HELPER
@@ -405,6 +406,8 @@ async def run_pistonheads(batch_pages: int = 5, start_page: int = 1, max_per_pag
                 if rec and rec.get('vehicle'):
                     rows.append(rec)
                     page_results.append(rec)
+                    # Save immediately (pass full record)
+                    save_to_leads([rec], 'piston_heads')
             except Exception as exc:
                 print(f" ❌ Error: {exc}")
             

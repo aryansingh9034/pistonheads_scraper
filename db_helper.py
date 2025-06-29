@@ -4,13 +4,16 @@ from mysql.connector import pooling, Error
 import time
 from datetime import datetime
 
+# Updated database configuration with remote credentials
 DB_CFG = dict(
-    host="127.0.0.1",
-    port=3306,
-    user="root",
-    password="Db@2025#ind$",
+    host="103.54.182.26",
+    port=4036,
+    user="eddytools",
+    password="V#$2)6E!)*sVC6{!*fi0",
     database="traders_leads",
-    auth_plugin="mysql_native_password"
+    auth_plugin="mysql_native_password",
+    connect_timeout=30,
+    autocommit=False
 )
 
 POOL_CFG = dict(
@@ -212,26 +215,43 @@ def save_to_leads(rows: list[dict], source: str):
         
         for i, row in enumerate(rows, 1):
             try:
+                # Handle nested structure from scrapers
+                vehicle = row.get('vehicle', {})
+                dealer = row.get('dealer', {})
+                
+                # Build information field from vehicle title or make/model
+                info = vehicle.get('title', '')
+                if not info and vehicle.get('make'):
+                    info = f"{vehicle.get('make', '')} {vehicle.get('model', '')} {vehicle.get('variant', '')}".strip()
+                
                 # Prepare values
                 values = (
-                    row.get('listing_url'),
-                    row.get('dealer_name', ''),  # company_name
-                    row.get('title', ''),  # information
-                    row.get('make', ''),
-                    row.get('model', ''),
-                    row.get('variant', ''),
-                    row.get('year', ''),
-                    row.get('price', ''),
-                    row.get('mileage', ''),
-                    row.get('fuel_type', ''),
-                    row.get('body_type', ''),
-                    row.get('gearbox', ''),
-                    row.get('dealer_phone', ''),  # phone_number
-                    row.get('dealer_location', ''),  # address_line_1
-                    row.get('dealer_city', ''),  # city
-                    source,  # source (AA or PistonHeads)
+                    row.get('listing_url', ''),
+                    dealer.get('name', ''),  # company_name
+                    info,  # information
+                    vehicle.get('make', ''),
+                    vehicle.get('model', ''),
+                    vehicle.get('variant', ''),
+                    vehicle.get('year', ''),
+                    vehicle.get('price', ''),
+                    vehicle.get('mileage', ''),
+                    vehicle.get('fuel_type', ''),
+                    vehicle.get('body_type', ''),
+                    vehicle.get('gearbox', ''),
+                    dealer.get('phone', ''),  # phone_number
+                    dealer.get('location', ''),  # address_line_1
+                    dealer.get('city', ''),  # city
+                    source,  # source (cazoo, piston_heads, the_aa)
                     'new_contact'  # status
                 )
+                
+                # Debug print for first few rows
+                if i <= 3:
+                    print(f"\n📝 Row {i} data:")
+                    print(f"   URL: {row.get('listing_url', 'N/A')}")
+                    print(f"   Dealer: {dealer.get('name', 'N/A')}")
+                    print(f"   Vehicle: {vehicle.get('make', 'N/A')} {vehicle.get('model', 'N/A')}")
+                    print(f"   Price: {vehicle.get('price', 'N/A')}")
                 
                 cur.execute(sql, values)
                 
@@ -248,6 +268,7 @@ def save_to_leads(rows: list[dict], source: str):
             except Error as e:
                 error_count += 1
                 print(f"  ⚠️ Error on row {i}: {e}")
+                print(f"     Row data: {row}")
                 # Continue with next row
         
         # Final commit
@@ -327,10 +348,10 @@ def save_rows(table: str, rows: list[dict]):
     """Backward compatible function that routes to save_to_leads"""
     # Determine source from table name
     if 'pistonheads' in table.lower():
-        source = 'PistonHeads'
+        source = 'piston_heads'
     elif 'aa' in table.lower():
-        source = 'AA'
+        source = 'the_aa'
     else:
-        source = 'Unknown'
+        source = 'cazoo'
     
     save_to_leads(rows, source)

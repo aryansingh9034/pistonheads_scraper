@@ -9,6 +9,7 @@ from typing import List, Dict, Optional, Tuple
 from crawl4ai import AsyncWebCrawler
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, urlencode
+from db_helper import save_to_leads
 
 FETCH_JS = """
     await new Promise(r => setTimeout(r, 3000));
@@ -25,12 +26,12 @@ MAX_PAGES_HARVEST = 40   # how many search pages to walk when urls=None
 # ──────────────────────────────────────────────────────────────
 #  HARVESTER – collect car listing links from AA search pages
 # ──────────────────────────────────────────────────────────────
-async def _harvest_links(search_url: str, max_pages: int) -> List[str]:
+async def _harvest_links(search_url: str, max_pages: int, start_page: int = 1) -> List[str]:
     """Harvest all car listing URLs from AA search pages"""
     all_links = []
-    page = 1
+    page = start_page
     
-    while page <= max_pages:
+    while page <= start_page + max_pages - 1:
         print(f"🔍 Harvesting page {page}...")
         
         # Update page number in URL
@@ -38,6 +39,8 @@ async def _harvest_links(search_url: str, max_pages: int) -> List[str]:
         params = parse_qs(parsed.query)
         params['page'] = [str(page)]
         current_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}?{urlencode(params, doseq=True)}"
+        
+        print(f"  📄 Fetching: {current_url}")
         
         async with AsyncWebCrawler(verbose=False, headless=True) as crawler:
             res = await crawler.arun(url=current_url, timeout=45000, js_code=FETCH_JS)
@@ -254,15 +257,26 @@ async def extract_aa_listing(url: str) -> Dict:
 # ──────────────────────────────────────────────────────────────
 #  PUBLIC BATCH RUNNER
 # ──────────────────────────────────────────────────────────────
-async def run_aa(urls: Optional[List[str]] = None, batch_size: int = 400) -> List[Dict]:
+async def run_aa(
+    urls: Optional[List[str]] = None, 
+    batch_size: int = 100,
+    batch_pages: int = 3,
+    start_page: int = 1
+) -> List[Dict]:
     """
     Main entry point for AA scraper
     - If urls provided: scrape those specific listings
     - Otherwise: harvest from search pages and scrape
+    - Supports pagination with start_page parameter
     """
     if urls is None:
         print("🔍 Starting AA harvest...")
-        urls = await _harvest_links(DEFAULT_SEARCH_URL, MAX_PAGES_HARVEST)
+        print(f"📄 Pages: {start_page} to {start_page + batch_pages - 1}")
+        
+        # Construct search URL with start page
+        search_url = f"https://www.theaa.com/used-cars/displaycars?fullpostcode=PR267SY&travel=2000&priceto=2000&page={start_page}"
+        
+        urls = await _harvest_links(search_url, batch_pages, start_page)
         print(f"✅ Harvested {len(urls)} detail URLs")
         
         if not urls:
@@ -280,6 +294,8 @@ async def run_aa(urls: Optional[List[str]] = None, batch_size: int = 400) -> Lis
             rec = await extract_aa_listing(url)
             if rec and rec.get("vehicle"):
                 rows.append(rec)
+                # Save immediately (pass full record)
+                save_to_leads([rec], 'the_aa')
             else:
                 print(f"⚠️ No data from {url}")
         except Exception as e:

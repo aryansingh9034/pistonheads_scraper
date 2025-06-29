@@ -6,6 +6,8 @@ from pathlib import Path
 from db_helper import save_to_leads, get_stats_by_source
 from scrapers.pistonheads_scraper import run_pistonheads
 from scrapers.aa_scraper import run_aa
+from scrapers.cazoo_scraper import run_cazoo
+import csv
 
 # Progress file to track scraping state
 PROGRESS_FILE = "scraping_progress.json"
@@ -31,6 +33,12 @@ def load_progress() -> dict:
             "last_run": None
         },
         "aa": {
+            "last_page": 0,
+            "total_pages_scraped": 0,
+            "total_listings": 0,
+            "last_run": None
+        },
+        "cazoo": {
             "last_page": 0,
             "total_pages_scraped": 0,
             "total_listings": 0,
@@ -94,6 +102,11 @@ async def main():
             "enabled": True,
             "pages_per_run": 3,  # Number of pages to scrape per run
             "max_listings_per_batch": 100,  # Max listings to process
+        },
+        "cazoo": {
+            "enabled": True,
+            "pages_per_run": 3,  # Number of pages to scrape per run
+            "max_listings_per_batch": 100,  # Max listings to process
         }
     }
     
@@ -103,6 +116,8 @@ async def main():
           f"Total scraped: {progress['pistonheads']['total_listings']}")
     print(f"   - AA Cars: Last page {progress['aa']['last_page']}, "
           f"Total scraped: {progress['aa']['total_listings']}")
+    print(f"   - Cazoo: Last page {progress['cazoo']['last_page']}, "
+          f"Total scraped: {progress['cazoo']['total_listings']}")
     
     # ─── PISTONHEADS SCRAPER ───
     if config["pistonheads"]["enabled"]:
@@ -150,31 +165,79 @@ async def main():
         print("🚗 AA CARS SCRAPER")
         print(f"{'─'*50}")
         
+        # Calculate start page
+        start_page = progress["aa"]["last_page"] + 1
+        end_page = start_page + config["aa"]["pages_per_run"] - 1
+        
+        print(f"📄 Scraping pages {start_page} to {end_page}")
+        
         try:
-            # For AA scraper, we need to modify it to accept start_page parameter
-            # For now, we'll use the batch_size parameter
-            aa_rows = await run_aa(batch_size=config["aa"]["max_listings_per_batch"])
+            aa_rows = await run_aa(
+                batch_size=config["aa"]["max_listings_per_batch"],
+                batch_pages=config["aa"]["pages_per_run"],
+                start_page=start_page
+            )
             
             if aa_rows:
                 # Flatten and save to leads table
                 aa_flat = [flatten(r) for r in aa_rows if r]
                 save_to_leads(aa_flat, "AA")
                 
-                # Update progress (AA scraper handles its own pagination internally)
-                # We estimate pages based on listings (assuming ~20 listings per page)
-                estimated_pages = len(aa_flat) // 20 + 1
-                progress["aa"]["last_page"] += estimated_pages
-                progress["aa"]["total_pages_scraped"] += estimated_pages
+                # Update progress
+                progress["aa"]["last_page"] = end_page
+                progress["aa"]["total_pages_scraped"] += config["aa"]["pages_per_run"]
                 progress["aa"]["total_listings"] += len(aa_flat)
                 progress["aa"]["last_run"] = datetime.now().isoformat()
                 
                 print(f"✅ AA Cars: {len(aa_flat)} new listings saved")
-                print(f"📄 Estimated {estimated_pages} pages processed")
+                print(f"📄 Next run will start from page {progress['aa']['last_page'] + 1}")
             else:
                 print("⚠️ No AA listings found")
                 
         except Exception as e:
             print(f"❌ AA Cars error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # ─── CAZOO SCRAPER ───
+    if config["cazoo"]["enabled"]:
+        print(f"\n{'─'*50}")
+        print("🚗 CAZOO SCRAPER")
+        print(f"{'─'*50}")
+        
+        # Calculate start page
+        start_page = progress["cazoo"]["last_page"] + 1
+        end_page = start_page + config["cazoo"]["pages_per_run"] - 1
+        
+        print(f"📄 Scraping pages {start_page} to {end_page}")
+        
+        try:
+            cz_rows = await run_cazoo(
+                batch_size=config["cazoo"]["max_listings_per_batch"],
+                batch_pages=config["cazoo"]["pages_per_run"],
+                start_page=start_page
+            )
+            
+            if cz_rows:
+                # Flatten and save to leads table
+                cz_flat = [flatten(r) for r in cz_rows if r]
+                save_to_leads(cz_flat, "Cazoo")
+                
+                # Update progress
+                progress["cazoo"]["last_page"] = end_page
+                progress["cazoo"]["total_pages_scraped"] += config["cazoo"]["pages_per_run"]
+                progress["cazoo"]["total_listings"] += len(cz_flat)
+                progress["cazoo"]["last_run"] = datetime.now().isoformat()
+                
+                print(f"✅ Cazoo: {len(cz_flat)} new listings saved")
+                print(f"📄 Next run will start from page {progress['cazoo']['last_page'] + 1}")
+                
+                save_to_csv(cz_rows, "cazoo_scraped_data.csv")
+            else:
+                print("⚠️ No Cazoo listings found")
+                
+        except Exception as e:
+            print(f"❌ Cazoo error: {e}")
             import traceback
             traceback.print_exc()
     
@@ -205,7 +268,8 @@ async def main():
     print(f"\n📝 Progress saved to: {PROGRESS_FILE}")
     print("\n🔄 NEXT RUN WILL START FROM:")
     print(f"   - PistonHeads: Page {progress['pistonheads']['last_page'] + 1}")
-    print(f"   - AA Cars: Will continue from last position")
+    print(f"   - AA Cars: Page {progress['aa']['last_page'] + 1}")
+    print(f"   - Cazoo: Page {progress['cazoo']['last_page'] + 1}")
     print(f"{'='*60}")
 
 # ────────────────────────────────────────────────────────────
@@ -227,6 +291,12 @@ if __name__ == "__main__":
                     "last_run": None
                 },
                 "aa": {
+                    "last_page": 0,
+                    "total_pages_scraped": 0,
+                    "total_listings": 0,
+                    "last_run": None
+                },
+                "cazoo": {
                     "last_page": 0,
                     "total_pages_scraped": 0,
                     "total_listings": 0,
@@ -260,3 +330,26 @@ if __name__ == "__main__":
             print(f"\n❌ Fatal error: {e}")
             import traceback
             traceback.print_exc()
+
+def save_to_csv(rows, filename):
+    if not rows:
+        print("No data to save to CSV.")
+        return
+    # Flatten the nested dict for CSV
+    flat_rows = []
+    for r in rows:
+        flat = {}
+        flat.update(r.get('vehicle', {}))
+        flat.update(r.get('dealer', {}))
+        flat['listing_url'] = r.get('listing_url')
+        flat_rows.append(flat)
+    # Get all possible keys
+    keys = set()
+    for row in flat_rows:
+        keys.update(row.keys())
+    keys = list(keys)
+    with open(filename, 'w', newline='', encoding='utf-8') as f:
+        writer = csv.DictWriter(f, fieldnames=keys)
+        writer.writeheader()
+        writer.writerows(flat_rows)
+    print(f"✅ Saved {len(flat_rows)} rows to {filename}")
