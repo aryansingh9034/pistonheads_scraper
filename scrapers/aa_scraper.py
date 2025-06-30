@@ -9,7 +9,7 @@ from typing import List, Dict, Optional, Tuple
 from crawl4ai import AsyncWebCrawler
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse, parse_qs, urlencode
-from db_helper import save_to_leads
+from db_helper import save_to_raw_source
 
 FETCH_JS = """
     await new Promise(r => setTimeout(r, 3000));
@@ -214,30 +214,65 @@ async def extract_aa_listing(url: str) -> Dict:
             except Exception as e:
                 print(f"⚠️ Failed to parse utag_data: {e}")
 
-    # 5. Dealer information extraction
+    # 5. Dealer information extraction (improved)
     dealer_selectors = [
         '[data-testid="dealer-name"]',
         '.dealer-name',
         'h2[class*="dealer"]',
         'div[class*="dealer-info"] h3'
     ]
-    
     for selector in dealer_selectors:
         if dealer_elem := soup.select_one(selector):
             d.setdefault("name", dealer_elem.get_text(strip=True))
             break
-
-    # Phone number
+    # Try to extract from overlays/modals
+    modal = soup.select_one('.lightbox-dialog, [role="dialog"], .modal, .dealer-modal')
+    if modal:
+        # Company name
+        name_elem = modal.find(string=re.compile("company name", re.I))
+        if name_elem and name_elem.parent:
+            next_elem = name_elem.parent.find_next('span')
+            if next_elem:
+                d["name"] = next_elem.get_text(strip=True)
+        # Address
+        address_elem = modal.find(string=re.compile("address", re.I))
+        if address_elem and address_elem.parent:
+            next_elem = address_elem.parent.find_next('span')
+            if next_elem:
+                d["address"] = next_elem.get_text(strip=True)
+        # Phone
+        phone_elem = modal.find(string=re.compile("phone", re.I))
+        if phone_elem and phone_elem.parent:
+            next_elem = phone_elem.parent.find_next('span')
+            if next_elem:
+                d["phone"] = next_elem.get_text(strip=True)
+        # Email
+        email_elem = modal.find(string=re.compile("email", re.I))
+        if email_elem and email_elem.parent:
+            next_elem = email_elem.parent.find_next('span')
+            if next_elem:
+                d["email"] = next_elem.get_text(strip=True)
+    # Phone number (main page)
     if tel := soup.find("a", href=re.compile(r"tel:")):
         d["phone"] = tel["href"].split(":", 1)[1]
-
+    # Email (main page)
+    email_elem = soup.find("a", href=re.compile(r"mailto:"))
+    if email_elem:
+        d["email"] = email_elem["href"].split(":", 1)[1]
+    # Website
+    website_elem = soup.find("a", href=True, string=re.compile("website", re.I))
+    if website_elem:
+        d["website"] = website_elem["href"]
+    # Contact form
+    contact_form = soup.find("a", href=True, string=re.compile("contact", re.I))
+    if contact_form:
+        d["contact_form_url"] = contact_form["href"]
     # Location
     location_selectors = [
         '[data-testid="dealer-location"]',
         '.dealer-location',
         'div[class*="location"]'
     ]
-    
     for selector in location_selectors:
         if loc_elem := soup.select_one(selector):
             location = loc_elem.get_text(strip=True)
@@ -245,13 +280,10 @@ async def extract_aa_listing(url: str) -> Dict:
             if ',' in location:
                 d["city"] = location.split(',')[0].strip()
             break
-
     # Clean up mileage if it exists
     if mileage := v.get("mileage"):
         v["mileage"] = re.sub(r'[^\d]', '', str(mileage))
-
     print(f"✅ Extracted: {v.get('make')} {v.get('model')} {v.get('year')} - £{v.get('price', 'N/A')}")
-    
     return row if v else {}
 
 # ──────────────────────────────────────────────────────────────
@@ -294,8 +326,8 @@ async def run_aa(
             rec = await extract_aa_listing(url)
             if rec and rec.get("vehicle"):
                 rows.append(rec)
-                # Save immediately (pass full record)
-                save_to_leads([rec], 'the_aa')
+                # Save immediately to raw_source (pass full record)
+                save_to_raw_source([rec], 'the_aa')
             else:
                 print(f"⚠️ No data from {url}")
         except Exception as e:
@@ -313,15 +345,13 @@ async def run_aa(
 # ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1].startswith("http"):
-        # Test specific URLs
         test_urls = sys.argv[1:]
-        results = asyncio.run(run_aa(test_urls, batch_size=len(test_urls)))
+        results = asyncio.run(run_aa(test_urls, batch_size=1))
         print(json.dumps(results, indent=2))
     else:
-        # Test harvest and scrape
-        data = asyncio.run(run_aa(batch_size=10))
+        data = asyncio.run(run_aa(batch_size=1))
         if data:
-            print(json.dumps(data[:2], indent=2))
-            print(f"\n✅ Total: {len(data)} listings")
+            print("\n📋 EXTRACTED DATA STRUCTURE:")
+            print(json.dumps(data[0], indent=2, default=str))
         else:
             print("❌ No data collected")

@@ -3,10 +3,11 @@ import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
-from db_helper import save_to_leads, get_stats_by_source
+from db_helper import save_to_raw_source, get_stats_by_source
 from scrapers.pistonheads_scraper import run_pistonheads
 from scrapers.aa_scraper import run_aa
 from scrapers.cazoo_scraper import run_cazoo
+from scrapers.gumtree_scraper import run_gumtree
 import csv
 
 # Progress file to track scraping state
@@ -39,6 +40,12 @@ def load_progress() -> dict:
             "last_run": None
         },
         "cazoo": {
+            "last_page": 0,
+            "total_pages_scraped": 0,
+            "total_listings": 0,
+            "last_run": None
+        },
+        "gumtree": {
             "last_page": 0,
             "total_pages_scraped": 0,
             "total_listings": 0,
@@ -94,7 +101,7 @@ async def main():
     # Configuration
     config = {
         "pistonheads": {
-            "enabled": True,
+            "enabled": False,
             "pages_per_run": 3,  # Number of pages to scrape per run
             "max_listings_per_page": 50,  # Max listings per page
         },
@@ -104,9 +111,14 @@ async def main():
             "max_listings_per_batch": 100,  # Max listings to process
         },
         "cazoo": {
-            "enabled": True,
+            "enabled": False,
             "pages_per_run": 3,  # Number of pages to scrape per run
             "max_listings_per_batch": 100,  # Max listings to process
+        },
+        "gumtree": {
+            "enabled": False,
+            "pages_per_run": 3,
+            "max_listings_per_batch": 100
         }
     }
     
@@ -118,6 +130,8 @@ async def main():
           f"Total scraped: {progress['aa']['total_listings']}")
     print(f"   - Cazoo: Last page {progress['cazoo']['last_page']}, "
           f"Total scraped: {progress['cazoo']['total_listings']}")
+    print(f"   - Gumtree: Last page {progress['gumtree']['last_page']}, "
+          f"Total scraped: {progress['gumtree']['total_listings']}")
     
     # ─── PISTONHEADS SCRAPER ───
     if config["pistonheads"]["enabled"]:
@@ -141,7 +155,7 @@ async def main():
             if ph_rows:
                 # Flatten and save to leads table
                 ph_flat = [flatten(r) for r in ph_rows if r]
-                save_to_leads(ph_flat, "PistonHeads")
+                save_to_raw_source(ph_rows, "piston_heads")
                 
                 # Update progress
                 progress["pistonheads"]["last_page"] = end_page
@@ -181,7 +195,7 @@ async def main():
             if aa_rows:
                 # Flatten and save to leads table
                 aa_flat = [flatten(r) for r in aa_rows if r]
-                save_to_leads(aa_flat, "AA")
+                save_to_raw_source(aa_rows, "the_aa")
                 
                 # Update progress
                 progress["aa"]["last_page"] = end_page
@@ -221,7 +235,7 @@ async def main():
             if cz_rows:
                 # Flatten and save to leads table
                 cz_flat = [flatten(r) for r in cz_rows if r]
-                save_to_leads(cz_flat, "Cazoo")
+                save_to_raw_source(cz_rows, "cazoo")
                 
                 # Update progress
                 progress["cazoo"]["last_page"] = end_page
@@ -238,6 +252,45 @@ async def main():
                 
         except Exception as e:
             print(f"❌ Cazoo error: {e}")
+            import traceback
+            traceback.print_exc()
+    
+    # ─── GUMTREE SCRAPER ───
+    if config["gumtree"]["enabled"]:
+        print(f"\n{'─'*50}")
+        print("🚗 GUMTREE SCRAPER")
+        print(f"{'─'*50}")
+        
+        # Calculate start page
+        start_page = progress["gumtree"]["last_page"] + 1
+        end_page = start_page + config["gumtree"]["pages_per_run"] - 1
+        
+        print(f"📄 Scraping pages {start_page} to {end_page}")
+        
+        try:
+            gumtree_rows = await run_gumtree(
+                batch_pages=config["gumtree"]["pages_per_run"],
+                start_page=start_page,
+                batch_size=config["gumtree"]["max_listings_per_batch"]
+            )
+            
+            if gumtree_rows:
+                # Flatten and save to leads table
+                gumtree_flat = [flatten(r) for r in gumtree_rows if r]
+                save_to_raw_source(gumtree_rows, "gumtree")
+                
+                # Update progress
+                progress["gumtree"]["last_page"] = end_page
+                progress["gumtree"]["total_pages_scraped"] += config["gumtree"]["pages_per_run"]
+                progress["gumtree"]["total_listings"] += len(gumtree_flat)
+                progress["gumtree"]["last_run"] = datetime.now().isoformat()
+                
+                print(f"✅ Gumtree: {len(gumtree_flat)} new listings saved")
+                print(f"📄 Next run will start from page {progress['gumtree']['last_page'] + 1}")
+            else:
+                print("⚠️ No Gumtree listings found")
+        except Exception as e:
+            print(f"❌ Gumtree error: {e}")
             import traceback
             traceback.print_exc()
     
@@ -270,6 +323,7 @@ async def main():
     print(f"   - PistonHeads: Page {progress['pistonheads']['last_page'] + 1}")
     print(f"   - AA Cars: Page {progress['aa']['last_page'] + 1}")
     print(f"   - Cazoo: Page {progress['cazoo']['last_page'] + 1}")
+    print(f"   - Gumtree: Page {progress['gumtree']['last_page'] + 1}")
     print(f"{'='*60}")
 
 # ────────────────────────────────────────────────────────────
@@ -297,6 +351,12 @@ if __name__ == "__main__":
                     "last_run": None
                 },
                 "cazoo": {
+                    "last_page": 0,
+                    "total_pages_scraped": 0,
+                    "total_listings": 0,
+                    "last_run": None
+                },
+                "gumtree": {
                     "last_page": 0,
                     "total_pages_scraped": 0,
                     "total_listings": 0,
